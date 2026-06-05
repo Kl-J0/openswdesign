@@ -1,0 +1,210 @@
+# 3. Design
+**Stock News Sentiment Analysis System (주식 뉴스 감성 분석 시스템)**
+
+### [ 기본 정보 ]
+* **학번:** 22220926
+* **성명:** 김준영
+* **이메일:** rudnw2021@naver.com
+
+
+### [ Revision history ]
+| Revision date | Version # | Description | Author |
+| :--- | :--- | :--- | :--- |
+| 06/04/2026 | 1.00 | Design Document 초안 작성 및 시스템 다이어그램 명세 | 김준영 |
+
+---
+
+## 1. Introduction
+본 문서는 앞선 Analysis 단계의 요구사항 분석 내용을 바탕으로, 안드로이드 MVVM 아키텍처 기반의 '주식 뉴스 감성 분석 시스템'을 구축하기 위해 필요한 클래스 구조, 객체 간 동적 상호작용 및 상태 변화를 명세한 구체적인 설계 보고서입니다. 본 시스템은 사용자가 주식 뉴스의 긍정/부정 감성 점수를 확인하고 모의 자산을 통해 가상 매매를 테스트할 수 있도록 설계되었습니다. 
+
+특히 외부 상용 데이터베이스나 별도의 웹 서버 인프라 없이, 로컬 환경 내에서 자바의 `TreeMap` 객체를 활용한 가상 서버 클래스(`StockVirtualServer`)와 텍스트 파일(`.txt`) 데이터 입출력 스트림을 구축하여 계정 정보 및 거래 내역 데이터를 독립적으로 관리할 수 있도록 설계 구조를 구체화하였습니다.
+
+---
+
+## 2. Class diagram
+
+```
++------------------------------------------------------------+
+|                       OrderFragment                        |   (View Layer)
++------------------------------------------------------------+
+| - binding: FragmentOrderBinding                            |
+| - viewModel: TradeViewModel                                |
++------------------------------------------------------------+
+| + onCreateView(): View                                     |
+| + initChartDisplay(): void                                 |
++------------------------------------------------------------+
+                              |
+                              | Uses / Observes
+                              v
++------------------------------------------------------------+
+|                       TradeViewModel                       |   (ViewModel Layer)
++------------------------------------------------------------+
+| + orderQuantity: LiveData<Integer>                        |
+| + estimatedPrice: LiveData<Long>                           |
++------------------------------------------------------------+
+| + executeBuyOrder(stockCode: String, qty: int): void      |
+| + executeSellOrder(stockCode: String, qty: int): void     |
+| - checkBalance(userId: String, amount: long): boolean      |
++------------------------------------------------------------+
+                              |
+                              | Requests data
+                              v
++------------------------------------------------------------+
+|                       AssetRepository                      |   (Repository Layer)
++------------------------------------------------------------+
+| - currentAsset: UserAsset                                  |
+| - virtualServer: StockVirtualServer                        |
++------------------------------------------------------------+
+| + updateUserBalance(userId: String, delta: long): void     |
+| + getPortfolioData(userId: String): PortfolioData          |
++------------------------------------------------------------+
+                              |
+                              | Accesses Virtual Engine
+                              v
++------------------------------------------------------------+
+|                     StockVirtualServer                     |   (Virtual Backend Engine)
++------------------------------------------------------------+
+| - accountMap: TreeMap<String, Account>                     |
+| - marketStockMap: Map<String, Stock>                       |
++------------------------------------------------------------+
+| + loadAccountData(): void                                  |
+| + processMatching(order: Order): void                      |
+| + saveTransactionTXT(): void                               |
++------------------------------------------------------------+
+```
+
+본 시스템은 유연하고 확장성 있는 구조를 확보하기 위해 MVVM(Model-View-ViewModel) 디자인 패턴을 채택하였습니다. UI 컴포넌트와 비즈니스 로직 간의 결합도를 최소화하도록 구조화하였으며, 시스템을 구성하는 주요 클래스들의 세부 명세는 다음 표와 같습니다.
+
+| Class Name | Attributes (속성) | Methods (메서드) & Description |
+| :--- | :--- | :--- |
+| **OrderFragment**<br><br>*(View Layer)* | - binding: FragmentOrderBinding<br>- viewModel: TradeViewModel | + **onCreateView()**: 화면 UI 레이아웃을 초기화하고 데이터 바인딩을 수행함.<br><br>+ **initChartDisplay()**: 실시간 주가 추이 및 뉴스 감성 점수 차트를 화면에 렌더링함. |
+| **TradeViewModel**<br><br>*(ViewModel Layer)* | + orderQuantity: LiveData\<Integer\><br>+ estimatedPrice: LiveData\<Long\> | + **executeBuyOrder(stockCode: String, qty: int)**: 매수 주문 비즈니스 로직을 트리거함.<br><br>+ **executeSellOrder(stockCode: String, qty: int)**: 매도 주문 로직을 수행하고 LiveData 상태를 업데이트함.<br><br>- **checkBalance(userId: String, amount: long)**: 주문 전 잔고 유효성을 검증함. |
+| **AssetRepository**<br><br>*(Repository Layer)* | - currentAsset: UserAsset<br>- virtualServer: StockVirtualServer | + **updateUserBalance(userId: String, delta: long)**: 가상 서버와 사용자 자산 데이터를 동기화함.<br><br>+ **getPortfolioData(userId: String)**: 현재 사용자의 모의 투자 포트폴리오 데이터를 가상 서버로부터 반환함. |
+| **StockVirtualServer**<br><br>*(Virtual Engine)* | - accountMap: TreeMap\<String, Account\><br>- marketStockMap: Map\<String, Stock\> | + **loadAccountData()**: 프로그램 시작 시 로컬 텍스트 파일 시스템에서 회원 및 자산 데이터를 메모리로 로드함.<br><br>+ **processMatching(order: Order)**: 가상 매매 매칭 엔진을 구동하여 체결을 처리함.<br><br>+ **saveTransactionTXT()**: 체결 완료된 거래 내역을 로컬 .txt 파일에 영구 저장함. |
+
+---
+
+## 3. Sequence diagram
+
+
+```
+OrderFragment       TradeViewModel       AssetRepository     StockVirtualServer     Local .txt File
+     |                    |                     |                     |                    |
+     |---[1] 누름 ------->|                     |                     |                    |
+     |  executeBuyOrder() |                     |                     |                    |
+     |                    |---[2] 검증요청 ---->|                     |                    |
+     |                    |   checkBalance()    |                     |                    |
+     |                    |                     |                     |                    |
+     |                    |<--[3] 검증완료 -----|                     |                    |
+     |                    |  (isSufficient=true)|                     |                    |
+     |                    |                     |                     |                    |
+     |                    |---[4] 매칭엔진구동 ---------------------->|                    |
+     |                    |   processMatching()                       |                    |
+     |                    |                                           |                    |
+     |                    |                                           |--[5] 자체호출 ---->|
+     |                    |                                           |  saveTransactionTXT|
+     |                    |                                           |  (거래기록 영구저장)
+     |                    |                                           |                    |
+     |                    |<--[6] 최종매칭성공결과 반환 --------------|                    |
+     |                    |   (갱신된 자산 데이터 포함)               |                    |
+     |                    |                                           |                    |
+     |                    |--[7] 상태 업데이트 --+                     |                    |
+     |                    |   (LiveData 변경)    |                     |                    |
+     |                    |<---------------------+                     |                    |
+     |<--[8] UI 자동감지 -|                                            |                    |
+     |   (잔고화면갱신)   |                                            |                    |
+     v                    v                     v                     v                    v
+```
+
+사용자가 화면에서 특정 주식 종목에 대한 가상 매수 주문 버튼을 클릭했을 때, 시스템 내부의 컴포넌트들이 시간 순서에 따라 유기적으로 메시지를 주고받으며 자산을 검증하고 거래 내역을 파일 시스템에 안전하게 기록하는 실행 흐름을 시퀀스 다이어그램으로 모델링하였습니다. 세부적인 동작 단계는 다음과 같습니다.
+
+1. 사용자가 주문 인터페이스에서 수량을 입력하고 매수 버튼을 누르면, View 레이어의 **OrderFragment**가 **TradeViewModel**의 `executeBuyOrder(stockCode, qty)` 메소드를 호출하여 트랜잭션을 트리거합니다.
+2. **TradeViewModel**은 사용자의 모의 투자 잔고가 주문 금액을 충족하는지 확인하기 위해 데이터 요청 채널인 **AssetRepository**에 `checkBalance(userId, requiredAmount)`를 호출합니다.
+3. **AssetRepository**는 가상 자산 한도를 검증한 후, 유효성 판단 결과를 ViewModel로 안전하게 반환합니다. (`isSufficient = true`)
+4. 자산 검증이 통과되면 **TradeViewModel**은 핵심 비즈니스 엔진인 **StockVirtualServer** 클래스의 `processMatching()` 메소드를 호출하여 가상 매매 매칭 프로세스를 구동합니다.
+5. 가상 매매 엔진인 **StockVirtualServer**는 내부 함수인 `saveTransactionTXT()`를 자체 호출(Self-Call)하여 체결된 거래 날짜, 종목 코드, 체결 수량 데이터를 로컬 경로의 텍스트 파일 시스템에 즉시 영구 기록합니다.
+6. 데이터 저장 및 체결이 완료되면 **StockVirtualServer**는 **TradeViewModel**로 최종 매칭 성공 응답과 함께 갱신된 자산 데이터를 반환합니다.
+7. 최종 응답을 받은 **TradeViewModel**이 관찰 가능한 데이터 객체인 **LiveData**의 상태를 업데이트하면, **OrderFragment**가 이를 자동 감지(Observation)하여 사용자 화면의 잔고 현황판 UI를 실시간으로 리프레시합니다.
+
+---
+
+## 4. State machine diagram
+> ※ 아래 영역은 시스템 화면 및 트랜잭션 수명 주기를 나타낸 상태 머신 다이어그램 표기 가이드입니다.
+
+```
+       +-------------------+
+       |   INIT / LOGOUT   | <-------------------------------+
+       +-------------------+                                 |
+                 |                                           |
+                 | [앱 실행 / 로그아웃]                        | [로그아웃 액션]
+                 v                                           |
+       +-------------------+                                 |
+       |   LOGIN_SCREEN    |                                 |
+       +-------------------+                                 |
+                 |                                           |
+                 | [accountMap 회원 검증 통과]               |
+                 v                                           |
+     +-----------------------+                               |
+  +->|    MAIN_DASHBOARD     |-------------------------------+
+  |  +-----------------------+
+  |              |
+  |              | [매수/매도 주문 버튼 클릭]
+  |              v
+  |  +-----------------------+
+  |  |     ORDER_PENDING     |  --> [잔고부족 / 매칭실패시 리턴]
+  |  +-----------------------+
+  |              |
+  |              | [가상 매칭 체결 완료]
+  |              v
+  |  +-----------------------+
+  +--|   TRANSACTION_SAVED   |
+     | (.txt 파일 영구 기록) |
+     +-----------------------+
+```
+
+본 시스템의 생명 주기는 사용자의 UI 화면 전환 흐름과 로컬 가상 서버의 데이터 트랜잭션 처리 단계를 기반으로 유기적으로 연동되는 상태 머신 구조로 설계되었습니다. 각 핵심 상태에 대한 상세 설명은 다음과 같습니다.
+
+* **INIT / LOGOUT 상태:** 애플리케이션이 최초로 구동되거나 사용자가 세션을 종료하여 시스템 변수 및 메모리가 초기화된 채 로그인 입력을 대기하는 기초 상태입니다.
+* **LOGIN_SCREEN 상태:** 사용자가 ID와 비밀번호를 입력한 후, 로컬 가상 서버의 `accountMap` 데이터 시스템과 대조하여 사용자 인증 여부를 엄격히 확인하는 검증 상태입니다. 인증이 성공하면 `MAIN_DASHBOARD` 상태로 전이됩니다.
+* **MAIN_DASHBOARD 상태:** 로그인 성공 후 진입하는 핵심 메인 루프 상태로, 사용자가 화면을 통해 실시간 모의 주가 차트를 관찰하고 파이썬 연동 모듈이 분석한 뉴스의 감성 점수(긍정/부정 지수)를 실시간으로 모니터링하는 상태입니다.
+* **ORDER_PENDING 상태:** 사용자가 대시보드에서 매수 혹은 매도 버튼을 클릭했을 때 진입하는 트랜잭션 대기 상태입니다. 가상 매칭 엔진이 가동되어 `AssetRepository`를 통해 잔고 동기화 및 체결 가능 여부를 집중적으로 판단합니다.
+* **TRANSACTION_SAVED 상태:** 주문 매칭이 완료된 후, 가상 서버가 자바 I/O 스트림(FileWriter)을 구동하여 로컬 디렉토리 내의 `.txt` 파일에 거래 원장을 무결하게 기록하는 상태입니다. 파일 저장이 완료되면 시스템은 안전하게 데이터를 유지한 채 다시 `MAIN_DASHBOARD` 상태로 복귀합니다.
+
+---
+
+## 5. Implementation requirements
+본 시스템을 안정적으로 구현하고 시뮬레이션하기 위해 요구되는 운영 환경 및 명세는 하드웨어, 소프트웨어, 비기능적 요구사항으로 분류되며 구체적인 내용은 아래와 같습니다.
+
+### 1) Hardware Requirements
+* **CPU:** Intel Core i5 / AMD Ryzen 5 이상 (안드로이드 스튜디오 에뮬레이터 가동을 위한 가상화 기술 가동 필수)
+* **RAM:** 8GB 이상 (안드로이드 개발 환경 및 자바 런타임 메모리 확보용)
+* **Storage:** HDD 또는 SSD 내 10GB 이상의 여유 공간 (가상 디바이스 이미지 및 거래 내역 데이터 텍스트 파일 저장 공간 포함)
+* **Network:** 외부 데이터베이스를 사용하지 않는 가상 독립형 구조이므로 인터넷 연결이 되어 있지 않은 오프라인 환경에서도 전체 시스템이 완벽하게 구동 가능해야 함.
+
+### 2) Software Requirements
+* **Operating System:** Windows 10 이상 / macOS 환경
+* **Development Tool:** Android Studio (Bumblebee 버전 이상 추천)
+* **Target SDK:** Android 33 (Android 13.0 Tiramisu)
+* **Minimum SDK:** Android 26 (Android 8.0 Oreo - LiveData 및 ViewModel 등 아키텍처 컴포넌트의 하위 호환성 보장 최소 사양)
+* **Implementation Language:** Java (JDK 11 이상) / Python 3.8 이상 (뉴스 감성 분석 파싱 모듈용)
+
+### 3) Nonfunctional Requirements
+* **데이터 무결성 및 독립성:** 외부 상용 DBMS(MySQL 등)를 배제하는 대신 자바의 정적 자료구조 맵(`TreeMap`)과 프로젝트 내 로컬 텍스트 파일(`.txt`) 입출력을 정밀하게 결합하여 데이터의 무결성을 보장하고 시스템 종료 후에도 자산 정보가 유실되지 않고 유지되어야 함.
+* **예외 처리 구조:** 가상 데이터 입출력 수행 중 수동적인 파일 조작 등으로 인해 발생할 수 있는 데이터 포맷 오류 및 파일 손상에 대해 강건한 `try-catch` 예외 처리 메커니즘이 설계에 반영되어야 함.
+
+---
+
+## 6. Glossary
+본 설계 문서에 적용된 소프트웨어 공학 및 도메인 핵심 용어들에 대한 정의는 다음과 같습니다.
+
+* **Sentiment Analysis (감성 분석):** 비정형 텍스트 데이터인 주식 뉴스 기사의 문맥과 어휘를 자연어 처리(NLP) 알고리즘을 통해 분석하여, 해당 기사가 시장에 미칠 영향을 정량적인 긍정·부정·중립의 지수 값으로 계량화하는 기술입니다.
+* **MVVM Pattern (Model-View-ViewModel):** 소프트웨어 아키텍처 패턴의 일종으로, 애플리케이션을 데이터 레이어(Model), 화면 표출 레이어(View), UI 상태 관리 및 비즈니스 로직 처리 레이어(ViewModel)로 명확히 분리하여 컴포넌트 간 종속성을 극도로 낮추고 테스트 용이성을 극대화하는 설계 방식입니다.
+* **LiveData:** 안드로이드 아키텍처 컴포넌트 중 하나로, 식별 가능한 데이터 홀더 클래스입니다. 생명 주기(Lifecycle)를 인식하여 앱 구성요소의 수명 주기가 활성화 상태일 때만 데이터 업데이트 통지를 전달하므로 메모리 누수를 방지합니다.
+* **StockVirtualServer (가상 서버):** 외부 서버 인프라나 클라우드 시스템 없이 로컬 런타임 환경에서 정적 자바 컬렉션 프레임워크 객체와 파일 입출력 스트림을 활용하여 회원 관리, 매매 체결, 원장 보관 등 독립적인 모의 서버 및 데이터베이스 역할을 대신 수행하도록 커스텀 설계된 시스템 핵심 백엔드 자바 클래스입니다.
+
+---
+
+## 7. References
+1. Android Open Source Project, "Architecture Components: LiveData and ViewModel Overview", Google Developers Guide, 2025.
+2. Erich Gamma, Richard Helm, Ralph Johnson, John Vlissides, *Design Patterns: Elements of Reusable Object-Oriented Software*, Addison-Wesley, 1994.
+3. 영남대학교 컴퓨터공학과, *객체지향 소프트웨어 공학 설계 문서 작성 지침 및 UML 다이어그램 표준 표기법 가이드라인*, 2026.
